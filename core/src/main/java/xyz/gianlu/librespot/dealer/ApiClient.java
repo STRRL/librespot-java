@@ -10,6 +10,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import xyz.gianlu.librespot.core.ApResolver;
 import xyz.gianlu.librespot.core.Session;
+import xyz.gianlu.librespot.debug.PutStateDebugger;
 import xyz.gianlu.librespot.mercury.MercuryClient;
 import xyz.gianlu.librespot.mercury.model.EpisodeId;
 import xyz.gianlu.librespot.mercury.model.TrackId;
@@ -45,9 +46,12 @@ public class ApiClient {
     }
 
     public void putConnectState(@NotNull String connectionId, @NotNull Connect.PutStateRequest proto) throws IOException, MercuryClient.MercuryException {
+        int code = PutStateDebugger.registerRequest(proto);
+
         try (Response resp = send("PUT", "/connect-state/v1/devices/" + session.deviceId(), new Headers.Builder()
                 .add("X-Spotify-Connection-Id", connectionId).build(), protoBody(proto))) {
             if (resp.code() != 200) LOGGER.warn(String.format("PUT %s returned %d", resp.request().url(), resp.code()));
+            PutStateDebugger.registerResponse(code, resp);
         }
     }
 
