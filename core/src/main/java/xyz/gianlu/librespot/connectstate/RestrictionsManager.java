@@ -10,7 +10,7 @@ import xyz.gianlu.librespot.player.contexts.AbsSpotifyContext;
 public final class RestrictionsManager {
     private final Player.Restrictions.Builder restrictions;
 
-    public RestrictionsManager(@NotNull AbsSpotifyContext<?> context) {
+    public RestrictionsManager(@NotNull AbsSpotifyContext context) {
         restrictions = Player.Restrictions.newBuilder();
 
         if (!context.isFinite()) {
@@ -73,6 +73,8 @@ public final class RestrictionsManager {
             case SKIP_NEXT:
                 restrictions.clearDisallowSkippingNextReasons();
                 break;
+            default:
+                throw new IllegalArgumentException("Unknown restriction for " + action);
         }
     }
 
@@ -104,6 +106,8 @@ public final class RestrictionsManager {
             case SKIP_NEXT:
                 restrictions.addDisallowSkippingNextReasons(reason);
                 break;
+            default:
+                throw new IllegalArgumentException("Unknown restriction for " + action);
         }
     }
 

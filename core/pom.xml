@@ -5,7 +5,7 @@
     <parent>
         <groupId>xyz.gianlu.librespot</groupId>
         <artifactId>librespot-java</artifactId>
-        <version>0.6.1</version>
+        <version>0.6.2</version>
         <relativePath>../</relativePath>
     </parent>
 
@@ -57,6 +57,11 @@
             <artifactId>jorbis</artifactId>
             <version>0.0.17</version>
         </dependency>
+        <dependency>
+            <groupId>com.badlogicgames.jlayer</groupId>
+            <artifactId>jlayer</artifactId>
+            <version>1.0.2-gdx</version>
+        </dependency>
 
         <!-- mDNS -->
         <dependency>
@@ -84,6 +89,13 @@
             <groupId>com.electronwill.night-config</groupId>
             <artifactId>toml</artifactId>
             <version>3.6.0</version>
+        </dependency>
+
+        <!-- Commons Net (NTP) -->
+        <dependency>
+            <groupId>commons-net</groupId>
+            <artifactId>commons-net</artifactId>
+            <version>3.6</version>
         </dependency>
     </dependencies>
 </project>

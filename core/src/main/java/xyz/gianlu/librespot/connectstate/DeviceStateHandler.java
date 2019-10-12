@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.TextFormat;
 import com.spotify.connectstate.model.Connect;
 import com.spotify.connectstate.model.Player;
 import org.apache.log4j.Logger;
@@ -25,8 +26,17 @@ import java.util.*;
 /**
  * @author Gianlu
  */
-public class DeviceStateHandler implements DealerClient.MessageListener {
+public final class DeviceStateHandler implements DealerClient.MessageListener {
     private static final Logger LOGGER = Logger.getLogger(DeviceStateHandler.class);
+
+    static {
+        try {
+            ProtoUtils.overrideDefaultValue(Connect.PutStateRequest.getDescriptor().findFieldByName("has_been_playing_for_ms"), -1);
+        } catch (IllegalAccessException | NoSuchFieldException ex) {
+            LOGGER.warn("Failed changing default value!", ex);
+        }
+    }
+
     private final Session session;
     private final Connect.DeviceInfo.Builder deviceInfo;
     private final List<Listener> listeners = new ArrayList<>();
@@ -60,6 +70,7 @@ public class DeviceStateHandler implements DealerClient.MessageListener {
                         .setIsObservable(true).setCommandAcks(true).setSupportsRename(false)
                         .setSupportsPlaylistV2(true).setIsControllable(true).setSupportsTransferCommand(true)
                         .setSupportsCommandRequest(true).setVolumeSteps(PlayerRunner.VOLUME_STEPS)
+                        .setSupportsGzipPushes(false).setNeedsFullPlayerState(false)
                         .addSupportedTypes("audio/episode")
                         .addSupportedTypes("audio/track")
                         .build());
@@ -78,48 +89,66 @@ public class DeviceStateHandler implements DealerClient.MessageListener {
     }
 
     private void notifyReady() {
-        synchronized (listeners) {
-            for (Listener listener : listeners) {
-                listener.ready();
-            }
-        }
+        for (Listener listener : new ArrayList<>(listeners))
+            listener.ready();
     }
 
     private void notifyCommand(@NotNull Endpoint endpoint, @NotNull CommandBody data) {
-        synchronized (listeners) {
-            for (Listener listener : listeners) {
-                try {
-                    listener.command(endpoint, data);
-                } catch (InvalidProtocolBufferException ex) {
-                    LOGGER.error("Failed parsing command!", ex);
-                }
+        for (Listener listener : new ArrayList<>(listeners)) {
+            try {
+                listener.command(endpoint, data);
+            } catch (InvalidProtocolBufferException ex) {
+                LOGGER.error("Failed parsing command!", ex);
             }
         }
     }
 
     private void notifyVolumeChange() {
-        synchronized (listeners) {
-            for (Listener listener : listeners)
-                listener.volumeChanged();
-        }
+        for (Listener listener : new ArrayList<>(listeners))
+            listener.volumeChanged();
+    }
+
+    private void requestStateUpdate() {
+        for (Listener listener : new ArrayList<>(listeners))
+            listener.requestStateUpdate();
+    }
+
+    private void notifyNotActive() {
+        for (Listener listener : new ArrayList<>(listeners))
+            listener.notActive();
     }
 
     @Override
     public void onMessage(@NotNull String uri, @NotNull Map<String, String> headers, @NotNull String[] payloads) throws IOException {
         if (uri.startsWith("hm://pusher/v1/connections/")) {
-            connectionId = headers.get("Spotify-Connection-Id");
-            notifyReady();
-        } else if (uri.startsWith("hm://connect-state/v1/connect/volume")) {
-            Connect.SetVolumeCommand cmd = Connect.SetVolumeCommand.parseFrom(BytesArrayList.streamBase64(payloads));
-            deviceInfo.setVolume(cmd.getVolume());
-
-            LOGGER.trace(String.format("Update volume. {volume: %d/%d}", cmd.getVolume(), PlayerRunner.VOLUME_MAX));
-            if (cmd.hasCommandOptions()) {
-                putState.setLastCommandMessageId(cmd.getCommandOptions().getMessageId())
-                        .clearLastCommandSentByDeviceId();
+            synchronized (this) {
+                connectionId = headers.get("Spotify-Connection-Id");
             }
 
+            notifyReady();
+        } else if (Objects.equals(uri, "hm://connect-state/v1/connect/volume")) {
+            Connect.SetVolumeCommand cmd = Connect.SetVolumeCommand.parseFrom(BytesArrayList.streamBase64(payloads));
+            synchronized (this) {
+                deviceInfo.setVolume(cmd.getVolume());
+                if (cmd.hasCommandOptions()) {
+                    putState.setLastCommandMessageId(cmd.getCommandOptions().getMessageId())
+                            .clearLastCommandSentByDeviceId();
+                }
+            }
+
+            LOGGER.trace(String.format("Update volume. {volume: %d/%d}", cmd.getVolume(), PlayerRunner.VOLUME_MAX));
             notifyVolumeChange();
+        } else if (Objects.equals(uri, "hm://connect-state/v1/cluster")) {
+            Connect.ClusterUpdate update = Connect.ClusterUpdate.parseFrom(BytesArrayList.streamBase64(payloads));
+
+            long now = TimeProvider.currentTimeMillis();
+            LOGGER.debug(String.format("Received cluster update at %d: %s", now, TextFormat.shortDebugString(update)));
+
+            long ts = update.getCluster().getTimestamp() - 3000; // Workaround
+            if (!session.deviceId().equals(update.getCluster().getActiveDeviceId()) && isActive() && now > startedPlayingAt() && ts > startedPlayingAt())
+                notifyNotActive();
+            else
+                requestStateUpdate();
         } else {
             LOGGER.warn(String.format("Message left unhandled! {uri: %s, rawPayloads: %s}", uri, Arrays.toString(payloads)));
         }
@@ -136,16 +165,26 @@ public class DeviceStateHandler implements DealerClient.MessageListener {
     public void updateState(@NotNull Connect.PutStateReason reason, @NotNull Player.PlayerState state) {
         try {
             putState(reason, state);
-            LOGGER.info(String.format("Updated state. {reason: %s}", reason));
         } catch (IOException | MercuryClient.MercuryException ex) {
             LOGGER.fatal("Failed updating state!", ex);
         }
     }
 
+    private synchronized long startedPlayingAt() {
+        return putState.getStartedPlayingAt();
+    }
+
+    private synchronized boolean isActive() {
+        return putState.getIsActive();
+    }
+
     public synchronized void setIsActive(boolean active) {
         if (active) {
-            if (!putState.getIsActive())
-                putState.setIsActive(true).setStartedPlayingAt(TimeProvider.currentTimeMillis());
+            if (!putState.getIsActive()) {
+                long now = TimeProvider.currentTimeMillis();
+                putState.setIsActive(true).setStartedPlayingAt(now);
+                LOGGER.debug(String.format("Device is now active. {ts: %d}", now));
+            }
         } else {
             putState.setIsActive(false).clearStartedPlayingAt();
         }
@@ -154,10 +193,16 @@ public class DeviceStateHandler implements DealerClient.MessageListener {
     private synchronized void putState(@NotNull Connect.PutStateReason reason, @NotNull Player.PlayerState state) throws IOException, MercuryClient.MercuryException {
         if (connectionId == null) throw new IllegalStateException();
 
+        long playerTime = session.player().time();
+        if (playerTime == -1) putState.clearHasBeenPlayingForMs();
+        else putState.setHasBeenPlayingForMs(playerTime);
+
         putState.setPutStateReason(reason)
+                .setClientSideTimestamp(TimeProvider.currentTimeMillis())
                 .getDeviceBuilder().setDeviceInfo(deviceInfo).setPlayerState(state);
 
         session.api().putConnectState(connectionId, putState.build());
+        LOGGER.info(String.format("Put state. {ts: %d, reason: %s, request: %s}", TimeProvider.currentTimeMillis(), reason, TextFormat.shortDebugString(putState)));
     }
 
     public synchronized int getVolume() {
@@ -192,10 +237,14 @@ public class DeviceStateHandler implements DealerClient.MessageListener {
         void command(@NotNull Endpoint endpoint, @NotNull CommandBody data) throws InvalidProtocolBufferException;
 
         void volumeChanged();
+
+        void notActive();
+
+        void requestStateUpdate();
     }
 
-    public static final class PlayCommandWrapper {
-        private PlayCommandWrapper() {
+    public static final class PlayCommandHelper {
+        private PlayCommandHelper() {
         }
 
         @Nullable
@@ -309,6 +358,11 @@ public class DeviceStateHandler implements DealerClient.MessageListener {
         public static JsonArray getPages(@NotNull JsonObject obj) {
             JsonObject context = getContext(obj);
             return context.getAsJsonArray("pages");
+        }
+
+        @NotNull
+        public static JsonObject getMetadata(@NotNull JsonObject obj) {
+            return getContext(obj).getAsJsonObject("metadata");
         }
     }
 

@@ -1,10 +1,11 @@
 package xyz.gianlu.librespot.dealer;
 
-import com.google.protobuf.AbstractMessageLite;
+import com.google.protobuf.Message;
 import com.spotify.connectstate.model.Connect;
 import com.spotify.metadata.proto.Metadata;
 import okhttp3.*;
 import okio.BufferedSink;
+import org.apache.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import xyz.gianlu.librespot.core.ApResolver;
@@ -19,18 +20,17 @@ import java.io.IOException;
  * @author Gianlu
  */
 public class ApiClient {
+    private static final Logger LOGGER = Logger.getLogger(ApiClient.class);
     private final Session session;
-    private final OkHttpClient client;
     private final String baseUrl;
 
     public ApiClient(@NotNull Session session) {
         this.session = session;
-        this.client = new OkHttpClient();
         this.baseUrl = "https://" + ApResolver.getRandomSpclient();
     }
 
     @NotNull
-    private static RequestBody protoBody(@NotNull AbstractMessageLite msg) {
+    private static RequestBody protoBody(@NotNull Message msg) {
         return new RequestBody() {
             @Override
             public MediaType contentType() {
@@ -45,19 +45,29 @@ public class ApiClient {
     }
 
     public void putConnectState(@NotNull String connectionId, @NotNull Connect.PutStateRequest proto) throws IOException, MercuryClient.MercuryException {
-        send("PUT", "/connect-state/v1/devices/" + session.deviceId(), new Headers.Builder()
-                .add("X-Spotify-Connection-Id", connectionId).build(), protoBody(proto)).close();
+        try (Response resp = send("PUT", "/connect-state/v1/devices/" + session.deviceId(), new Headers.Builder()
+                .add("X-Spotify-Connection-Id", connectionId).build(), protoBody(proto))) {
+            if (resp.code() != 200) LOGGER.warn(String.format("PUT %s returned %d", resp.request().url(), resp.code()));
+        }
     }
 
     @NotNull
-    public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
+    private Request buildRequest(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
         Request.Builder request = new Request.Builder();
         request.method(method, body);
         if (headers != null) request.headers(headers);
         request.addHeader("Authorization", "Bearer " + session.tokens().get("playlist-read"));
         request.url(baseUrl + suffix);
+        return request.build();
+    }
 
-        return client.newCall(request.build()).execute();
+    public void sendAsync(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body, @NotNull Callback callback) throws IOException, MercuryClient.MercuryException {
+        session.client().newCall(buildRequest(method, suffix, headers, body)).enqueue(callback);
+    }
+
+    @NotNull
+    public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
+        return session.client().newCall(buildRequest(method, suffix, headers, body)).execute();
     }
 
     @NotNull

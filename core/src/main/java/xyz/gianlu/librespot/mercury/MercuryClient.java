@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * @author Gianlu
  */
-public class MercuryClient extends PacketsManager {
+public final class MercuryClient extends PacketsManager {
     private static final Logger LOGGER = Logger.getLogger(MercuryClient.class);
     private final AtomicInteger seqHolder = new AtomicInteger(1);
     private final Map<Long, Callback> callbacks = new ConcurrentHashMap<>();
@@ -71,7 +71,7 @@ public class MercuryClient extends PacketsManager {
             }
         });
 
-        return Utils.wait(reference);
+        return Utils.wait(reference, 3000);
     }
 
     @NotNull
@@ -203,7 +203,7 @@ public class MercuryClient extends PacketsManager {
             }
 
             if (!dispatched)
-                LOGGER.warn(String.format("Couldn't dispatch Mercury event {seq: %d, uri: %s, code: %d, payload: %s}", seq, header.getUri(), header.getStatusCode(), Utils.bytesToHex(resp.payload.get(0))));
+                LOGGER.debug(String.format("Couldn't dispatch Mercury event {seq: %d, uri: %s, code: %d, payload: %s}", seq, header.getUri(), header.getStatusCode(), resp.payload.toHex()));
         } else if (packet.is(Packet.Type.MercuryReq) || packet.is(Packet.Type.MercurySub) || packet.is(Packet.Type.MercuryUnsub)) {
             Callback callback = callbacks.remove(seq);
             if (callback != null) {

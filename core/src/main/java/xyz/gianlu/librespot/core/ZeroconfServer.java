@@ -214,7 +214,7 @@ public class ZeroconfServer implements Closeable {
 
     private void handleGetInfo(OutputStream out, String httpVersion) throws IOException {
         JsonObject info = DEFAULT_GET_INFO_FIELDS.deepCopy();
-        info.addProperty("activeUser", hasValidSession() ? session.apWelcome().getCanonicalUsername() : "");
+        info.addProperty("activeUser", hasValidSession() ? session.username() : "");
         info.addProperty("deviceID", inner.deviceId);
         info.addProperty("remoteName", inner.deviceName);
         info.addProperty("publicKey", Base64.getEncoder().encodeToString(keys.publicKeyArray()));
@@ -238,20 +238,19 @@ public class ZeroconfServer implements Closeable {
         TimingsDebugger.start("zeroconf-add-user-resp");
 
         String username = params.get("userName");
-        if (username == null) {
+        if (username == null || username.isEmpty()) {
             LOGGER.fatal("Missing userName!");
             return;
         }
 
-        String blobStr = params.get("authBlob");
-        if (blobStr == null) blobStr = params.get("blob");
-        if (blobStr == null) {
-            LOGGER.fatal("Missing authBlob!");
+        String blobStr = params.get("blob");
+        if (blobStr == null || blobStr.isEmpty()) {
+            LOGGER.fatal("Missing blob!");
             return;
         }
 
         String clientKeyStr = params.get("clientKey");
-        if (clientKeyStr == null) {
+        if (clientKeyStr == null || clientKeyStr.isEmpty()) {
             LOGGER.fatal("Missing clientKey!");
             return;
         }
@@ -314,7 +313,7 @@ public class ZeroconfServer implements Closeable {
             }
 
             session = Session.from(inner);
-            LOGGER.info(String.format("Accepted new user. {deviceId: %s}", session.deviceId()));
+            LOGGER.info(String.format("Accepted new user from %s. {deviceId: %s}", params.get("deviceName"), session.deviceId()));
 
             session.connect();
             session.authenticate(credentials);
@@ -357,7 +356,7 @@ public class ZeroconfServer implements Closeable {
                         }
                     });
                 } catch (IOException ex) {
-                    LOGGER.fatal("Failed handling connection!", ex);
+                    if (!shouldStop) LOGGER.fatal("Failed handling connection!", ex);
                 }
             }
         }

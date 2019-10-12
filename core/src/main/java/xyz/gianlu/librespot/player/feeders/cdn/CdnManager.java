@@ -1,4 +1,4 @@
-package xyz.gianlu.librespot.cdn;
+package xyz.gianlu.librespot.player.feeders.cdn;
 
 import com.google.protobuf.ByteString;
 import com.spotify.metadata.proto.Metadata;
@@ -38,21 +38,14 @@ import static xyz.gianlu.librespot.player.feeders.storage.ChannelManager.CHUNK_S
 public class CdnManager {
     private static final Logger LOGGER = Logger.getLogger(CdnManager.class);
     private final Session session;
-    private final OkHttpClient client;
 
     public CdnManager(@NotNull Session session) {
         this.session = session;
-        this.client = new OkHttpClient();
-    }
-
-    @NotNull
-    public OkHttpClient client() {
-        return client;
     }
 
     @NotNull
     private InputStream getHead(@NotNull ByteString fileId) throws IOException {
-        Response resp = client.newCall(new Request.Builder()
+        Response resp = session.client().newCall(new Request.Builder()
                 .get().url("https://heads-fa.spotify.com/head/" + Utils.bytesToHex(fileId).toLowerCase())
                 .build()).execute();
 
@@ -67,17 +60,20 @@ public class CdnManager {
     }
 
     @NotNull
-    public Streamer streamEpisode(@NotNull Metadata.Episode episode, @NotNull HttpUrl externalUrl, @Nullable AbsChunckedInputStream.HaltListener haltListener) throws IOException, CdnException {
-        return new Streamer(new StreamId(episode), SuperAudioFormat.MP3, new CdnUrl(null, externalUrl),
+    public Streamer streamExternalEpisode(@NotNull Metadata.Episode episode, @NotNull HttpUrl externalUrl, @Nullable AbsChunckedInputStream.HaltListener haltListener) throws IOException, CdnException {
+        return new Streamer(new StreamId(episode), SuperAudioFormat.MP3 /* Guaranteed */, new CdnUrl(null, externalUrl),
                 session.cache(), new NoopAudioDecrypt(), haltListener);
     }
 
     @NotNull
-    public Streamer streamTrack(@NotNull Metadata.AudioFile file, @NotNull byte[] key, @Nullable AbsChunckedInputStream.HaltListener haltListener) throws IOException, MercuryClient.MercuryException, CdnException {
-        return new Streamer(new StreamId(file), SuperAudioFormat.get(file.getFormat()),
-                getCdnUrl(file.getFileId()), session.cache(), new AesAudioDecrypt(key), haltListener);
+    public Streamer streamFile(@NotNull Metadata.AudioFile file, @NotNull byte[] key, @NotNull HttpUrl url, @Nullable AbsChunckedInputStream.HaltListener haltListener) throws IOException, CdnException {
+        return new Streamer(new StreamId(file), SuperAudioFormat.get(file.getFormat()), new CdnUrl(file.getFileId(), url),
+                session.cache(), new AesAudioDecrypt(key), haltListener);
     }
 
+    /**
+     * This is used only to RENEW the url if needed.
+     */
     @NotNull
     private HttpUrl getAudioUrl(@NotNull ByteString fileId) throws IOException, CdnException, MercuryClient.MercuryException {
         try (Response resp = session.api().send("GET", String.format("/storage-resolve/files/audio/interactive/%s", Utils.bytesToHex(fileId)), null, null)) {
@@ -96,11 +92,6 @@ public class CdnManager {
                 throw new CdnException(String.format("Could not retrieve CDN url! {result: %s}", proto.getResult()));
             }
         }
-    }
-
-    @NotNull
-    private CdnUrl getCdnUrl(@NotNull ByteString fileId) throws IOException, MercuryClient.MercuryException, CdnException {
-        return new CdnUrl(fileId, getAudioUrl(fileId));
     }
 
     public static class CdnException extends Exception {
@@ -318,7 +309,7 @@ public class CdnManager {
 
         @NotNull
         public synchronized InternalResponse request(int rangeStart, int rangeEnd) throws IOException, CdnException {
-            try (Response resp = client.newCall(new Request.Builder().get().url(cdnUrl.url())
+            try (Response resp = session.client().newCall(new Request.Builder().get().url(cdnUrl.url())
                     .header("Range", "bytes=" + rangeStart + "-" + rangeEnd)
                     .build()).execute()) {
 
