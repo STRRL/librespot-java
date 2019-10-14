@@ -71,6 +71,8 @@ public class DealerClient implements Closeable {
 
         JsonObject command = payload.getAsJsonObject("command");
 
+        LOGGER.trace(String.format("Received request. {mid: %s, pid: %d, sender: %s}", mid, pid, sender));
+
         boolean interesting = false;
         synchronized (listeners) {
             for (MessageListener listener : listeners.keySet()) {
@@ -251,12 +253,12 @@ public class DealerClient implements Closeable {
 
             @Override
             public void onOpen(@NotNull WebSocket ws, @NotNull Response response) {
-                LOGGER.debug(String.format("Dealer connected! {host: %s}", response.request().url().host()));
-                if (closed) {
-                    LOGGER.fatal("I wonder what happened here... Terminating.");
+                if (closed || scheduler.isShutdown()) {
+                    LOGGER.fatal(String.format("I wonder what happened here... Terminating. {closed: %b}", closed));
                     return;
                 }
 
+                LOGGER.debug(String.format("Dealer connected! {host: %s}", response.request().url().host()));
                 lastScheduledPing = scheduler.scheduleAtFixedRate(() -> {
                     sendPing();
                     receivedPong = false;

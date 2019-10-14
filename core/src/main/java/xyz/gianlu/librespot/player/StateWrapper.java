@@ -27,6 +27,7 @@ import xyz.gianlu.librespot.common.Utils;
 import xyz.gianlu.librespot.connectstate.DeviceStateHandler;
 import xyz.gianlu.librespot.connectstate.DeviceStateHandler.PlayCommandHelper;
 import xyz.gianlu.librespot.connectstate.RestrictionsManager;
+import xyz.gianlu.librespot.connectstate.RestrictionsManager.Action;
 import xyz.gianlu.librespot.core.Session;
 import xyz.gianlu.librespot.core.TimeProvider;
 import xyz.gianlu.librespot.dealer.DealerClient;
@@ -124,7 +125,7 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
         if (context == null) return;
 
         boolean old = isShufflingContext();
-        state.getOptionsBuilder().setShufflingContext(value && context.restrictions.can(RestrictionsManager.Action.SHUFFLE));
+        state.getOptionsBuilder().setShufflingContext(value && context.restrictions.can(Action.SHUFFLE));
 
         if (old != isShufflingContext()) tracksKeeper.toggleShuffle(isShufflingContext());
     }
@@ -136,7 +137,7 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
     void setRepeatingContext(boolean value) {
         if (context == null) return;
 
-        state.getOptionsBuilder().setRepeatingContext(value && context.restrictions.can(RestrictionsManager.Action.REPEAT_CONTEXT));
+        state.getOptionsBuilder().setRepeatingContext(value && context.restrictions.can(Action.REPEAT_CONTEXT));
     }
 
     boolean isRepeatingTrack() {
@@ -146,7 +147,7 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
     void setRepeatingTrack(boolean value) {
         if (context == null) return;
 
-        state.getOptionsBuilder().setRepeatingTrack(value && context.restrictions.can(RestrictionsManager.Action.REPEAT_TRACK));
+        state.getOptionsBuilder().setRepeatingTrack(value && context.restrictions.can(Action.REPEAT_TRACK));
     }
 
     @Nullable
@@ -230,27 +231,23 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
     private void updateRestrictions() {
         if (context == null) return;
 
-        if (isPaused())
-            context.restrictions.disallow(RestrictionsManager.Action.PAUSE, "already_paused");
-        else
-            context.restrictions.allow(RestrictionsManager.Action.PAUSE);
-
-        if (isPlaying())
-            context.restrictions.disallow(RestrictionsManager.Action.RESUME, "not_paused");
-        else
-            context.restrictions.allow(RestrictionsManager.Action.RESUME);
+        if (isPaused()) context.restrictions.disallow(Action.PAUSE, RestrictionsManager.REASON_ALREADY_PAUSED);
+        else context.restrictions.allow(Action.PAUSE);
+        if (isPlaying()) context.restrictions.disallow(Action.RESUME, RestrictionsManager.REASON_NOT_PAUSED);
+        else context.restrictions.allow(Action.RESUME);
 
         if (tracksKeeper.isPlayingFirst() && !isRepeatingContext())
-            context.restrictions.disallow(RestrictionsManager.Action.SKIP_PREV, "no_prev_track");
+            context.restrictions.disallow(Action.SKIP_PREV, RestrictionsManager.REASON_NO_PREV_TRACK);
         else
-            context.restrictions.allow(RestrictionsManager.Action.SKIP_PREV);
+            context.restrictions.allow(Action.SKIP_PREV);
 
         if (tracksKeeper.isPlayingLast() && !isRepeatingContext())
-            context.restrictions.disallow(RestrictionsManager.Action.SKIP_NEXT, "no_next_track");
+            context.restrictions.disallow(Action.SKIP_NEXT, RestrictionsManager.REASON_NO_NEXT_TRACK);
         else
-            context.restrictions.allow(RestrictionsManager.Action.SKIP_NEXT);
+            context.restrictions.allow(Action.SKIP_NEXT);
 
         state.setRestrictions(context.restrictions.toProto());
+        state.setContextRestrictions(context.restrictions.toProto());
     }
 
     synchronized void updated() {
@@ -264,6 +261,7 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
 
     @Override
     public synchronized void ready() {
+        state.setIsSystemInitiated(true);
         device.updateState(Connect.PutStateReason.NEW_DEVICE, state.build());
         LOGGER.info("Notified new device (us)!");
     }
@@ -400,8 +398,8 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
     }
 
     void loadContextWithTracks(@NotNull String uri, @NotNull List<ContextTrack> tracks) throws MercuryClient.MercuryException, IOException, AbsSpotifyContext.UnsupportedContextException {
-        state.clearPlayOrigin();
-        state.clearOptions();
+        state.setPlayOrigin(PlayOrigin.newBuilder().build());
+        state.setOptions(ContextPlayerOptions.newBuilder().build());
 
         setContext(uri);
         pages.putFirstPage(tracks);
@@ -412,8 +410,8 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
     }
 
     void loadContext(@NotNull String uri) throws MercuryClient.MercuryException, IOException, AbsSpotifyContext.UnsupportedContextException {
-        state.clearPlayOrigin();
-        state.clearOptions();
+        state.setPlayOrigin(PlayOrigin.newBuilder().build());
+        state.setOptions(ContextPlayerOptions.newBuilder().build());
 
         setContext(uri);
         tracksKeeper.initializeStart();
@@ -790,17 +788,23 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
             ProvidedTrack current = getCurrentTrack();
             if (current.containsMetadata("duration"))
                 state.setDuration(Long.parseLong(current.getMetadataOrThrow("duration")));
+            else
+                state.clearDuration();
         }
 
         private void updateLikeDislike() {
             if (Objects.equals(state.getContextMetadataOrDefault("like-feedback-enabled", "0"), "1")) {
                 state.putContextMetadata("like-feedback-selected",
                         state.getTrack().getMetadataOrDefault("like-feedback-selected", "0"));
+            } else {
+                state.removeContextMetadata("like-feedback-selected");
             }
 
             if (Objects.equals(state.getContextMetadataOrDefault("dislike-feedback-enabled", "0"), "1")) {
                 state.putContextMetadata("dislike-feedback-selected",
                         state.getTrack().getMetadataOrDefault("dislike-feedback-selected", "0"));
+            } else {
+                state.removeContextMetadata("dislike-feedback-selected");
             }
         }
 
