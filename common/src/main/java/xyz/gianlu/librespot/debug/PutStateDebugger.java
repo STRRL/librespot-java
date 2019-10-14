@@ -48,6 +48,7 @@ public final class PutStateDebugger {
     public static int registerRequest(Connect.PutStateRequest proto) {
         int code = requestCounter.getAndIncrement();
         entries.put(code, Entry.forRequest(proto));
+        System.out.println("============ PUT STATE REQUEST #" + code + " ============");
         return code;
     }
 
