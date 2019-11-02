@@ -17,6 +17,7 @@ import xyz.gianlu.librespot.common.ProtoUtils;
 import xyz.gianlu.librespot.core.Session;
 import xyz.gianlu.librespot.core.TimeProvider;
 import xyz.gianlu.librespot.dealer.DealerClient;
+import xyz.gianlu.librespot.dealer.DealerClient.RequestResult;
 import xyz.gianlu.librespot.mercury.MercuryClient;
 import xyz.gianlu.librespot.player.PlayerRunner;
 
@@ -26,7 +27,7 @@ import java.util.*;
 /**
  * @author Gianlu
  */
-public final class DeviceStateHandler implements DealerClient.MessageListener {
+public final class DeviceStateHandler implements DealerClient.MessageListener, DealerClient.RequestListener {
     private static final Logger LOGGER = Logger.getLogger(DeviceStateHandler.class);
 
     static {
@@ -52,7 +53,8 @@ public final class DeviceStateHandler implements DealerClient.MessageListener {
                         .setDeviceInfo(deviceInfo)
                         .build());
 
-        session.dealer().addListener(this, "hm://pusher/v1/connections/", "hm://connect-state/v1/");
+        session.dealer().addMessageListener(this, "hm://pusher/v1/connections/", "hm://connect-state/v1/connect/volume", "hm://connect-state/v1/cluster");
+        session.dealer().addRequestListener(this, "hm://connect-state/v1/");
     }
 
     @NotNull
@@ -108,11 +110,6 @@ public final class DeviceStateHandler implements DealerClient.MessageListener {
             listener.volumeChanged();
     }
 
-    private void requestStateUpdate() {
-        for (Listener listener : new ArrayList<>(listeners))
-            listener.requestStateUpdate();
-    }
-
     private void notifyNotActive() {
         for (Listener listener : new ArrayList<>(listeners))
             listener.notActive();
@@ -147,19 +144,19 @@ public final class DeviceStateHandler implements DealerClient.MessageListener {
             long ts = update.getCluster().getTimestamp() - 3000; // Workaround
             if (!session.deviceId().equals(update.getCluster().getActiveDeviceId()) && isActive() && now > startedPlayingAt() && ts > startedPlayingAt())
                 notifyNotActive();
-            else
-                requestStateUpdate();
         } else {
             LOGGER.warn(String.format("Message left unhandled! {uri: %s, rawPayloads: %s}", uri, Arrays.toString(payloads)));
         }
     }
 
+    @NotNull
     @Override
-    public void onRequest(@NotNull String mid, int pid, @NotNull String sender, @NotNull JsonObject command) {
+    public RequestResult onRequest(@NotNull String mid, int pid, @NotNull String sender, @NotNull JsonObject command) {
         putState.setLastCommandMessageId(pid).setLastCommandSentByDeviceId(sender);
 
         Endpoint endpoint = Endpoint.parse(command.get("endpoint").getAsString());
         notifyCommand(endpoint, new CommandBody(command));
+        return RequestResult.SUCCESS;
     }
 
     public void updateState(@NotNull Connect.PutStateReason reason, @NotNull Player.PlayerState state) {
@@ -239,8 +236,6 @@ public final class DeviceStateHandler implements DealerClient.MessageListener {
         void volumeChanged();
 
         void notActive();
-
-        void requestStateUpdate();
     }
 
     public static final class PlayCommandHelper {
